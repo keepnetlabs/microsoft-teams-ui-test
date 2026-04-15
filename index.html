@@ -163,6 +163,17 @@
         background: #f3f8ff;
         color: #1f4b99;
       }
+      #rendered-html-view {
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      #rendered-html-content {
+        max-width: 960px;
+        margin: 0 auto;
+      }
+      #rendered-html-content > * {
+        max-width: 100%;
+      }
     </style>
   </head>
 
@@ -572,6 +583,23 @@
         });
       }
 
+      function prepareRenderedContentLinks(container) {
+        if (!container) return;
+
+        container.querySelectorAll("a[href]").forEach((link) => {
+          link.target = "_blank";
+
+          const relValues = new Set(
+            (link.getAttribute("rel") || "")
+              .split(/\s+/)
+              .filter(Boolean)
+          );
+          relValues.add("noopener");
+          relValues.add("noreferrer");
+          link.setAttribute("rel", Array.from(relValues).join(" "));
+        });
+      }
+
       function getContextPayload(ctx) {
         const encodedPayload =
           ctx?.page?.subEntityId || ctx?.subEntityId || ctx?.page?.subPageId;
@@ -711,6 +739,7 @@
         if (content) {
           content.innerHTML = htmlContent || "";
           bindRenderedTrainingUrl(content, trainingUrl);
+          prepareRenderedContentLinks(content);
           bindRenderedContentLinks(content);
         }
 
@@ -838,24 +867,31 @@
         renderStaticView(normalizeStaticPayload(payload));
       }
 
+      function bootApp() {
+        microsoftTeams?.app
+          .initialize()
+          .then(() => microsoftTeams.app.getContext())
+          .then((ctx) => {
+            const contextResult = getContextPayload(ctx);
+
+            if (contextResult.state === "missing") {
+              return;
+            }
+
+            if (contextResult.state === "invalid") {
+              showAppStatus("This notification link is invalid or incomplete.");
+              return;
+            }
+
+            return renderFromContextPayload(contextResult.payload);
+          })
+          .catch(() => {
+            showAppStatus("We could not initialize the Teams context.");
+          });
+      }
+
       // Boot
-      microsoftTeams?.app
-        .initialize()
-        .then(() => microsoftTeams.app.getContext())
-        .then(async (ctx) => {
-          const contextResult = getContextPayload(ctx);
-          if (contextResult.state === "missing") {
-            return;
-          }
-
-          if (contextResult.state === "invalid") {
-            showAppStatus("This notification link is invalid or incomplete.");
-            return;
-          }
-
-          await renderFromContextPayload(contextResult.payload);
-        })
-        .catch((err) => err.message);
+      bootApp();
     </script>
   </body>
 
