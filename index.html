@@ -150,6 +150,19 @@
           grid-template-columns: 1fr;
         }
       }
+      .state-message {
+        padding: 14px 16px;
+        border-radius: 8px;
+        border: 1px solid #f1b5b5;
+        background: #fff5f5;
+        color: #8a1c1c;
+        line-height: 1.5;
+      }
+      .state-message.is-loading {
+        border-color: #c8defa;
+        background: #f3f8ff;
+        color: #1f4b99;
+      }
     </style>
   </head>
 
@@ -167,6 +180,11 @@
     <div style="visibility: hidden;" class="debug" id="debug"></div>
   </div> -->
 
+    <div
+      id="app-status"
+      class="state-message"
+      style="display: none; margin: 24px"
+    ></div>
     <div
       id="default-view"
       style="
@@ -264,7 +282,7 @@
       <div style="display: table; width: 100%; padding: 10px">
         <div style="display: table-cell; vertical-align: top; width: 66%">
           <h1
-            id="training-title"
+            class="training-title"
             style="margin: 0; font-size: 28px; color: #1f1f1f"
           >
             Training Enrollment
@@ -282,7 +300,7 @@
           <img
             src="https://api.keepnetlabs.com/whitelabeling/mainlogo/3b9fcb6f-76f4-412e-a28b-ec94c0420534.png"
             alt="Company Logo"
-            id="logo-url"
+            class="company-logo"
             style="height: 40px"
           />
         </div>
@@ -361,7 +379,7 @@
       <div style="display: table; width: 100%; padding: 10px">
         <div style="display: table-cell; vertical-align: top; width: 66%">
           <h1
-            id="training-title"
+            class="training-title"
             style="margin: 0; font-size: 28px; color: #1f1f1f"
           >
             Learning Path Enrollment
@@ -379,7 +397,7 @@
           <img
             src="https://api.keepnetlabs.com/whitelabeling/mainlogo/3b9fcb6f-76f4-412e-a28b-ec94c0420534.png"
             alt="Company Logo"
-            id="logo-url"
+            class="company-logo"
             style="height: 40px"
           />
         </div>
@@ -450,6 +468,14 @@
         </div>
       </div>
     </div>
+    <div id="rendered-html-view" style="display: none">
+      <div
+        id="rendered-html-status"
+        class="state-message"
+        style="display: none; margin: 24px"
+      ></div>
+      <div id="rendered-html-content"></div>
+    </div>
     <script>
       // HTML-escape kaynaklı &amp; varyasyonlarını düzelt
       function normalizeUrl(u) {
@@ -460,27 +486,240 @@
           .replace(/&amp;/gi, "&");
       }
 
-      // Teams içindeyse sistem tarayıcısında aç
-      function bindOpenInBrowser(isLearningPath = false) {
-        const btn = isLearningPath
-          ? document.getElementById("start-learning-path")
-          : document.getElementById("start-training");
-        if (!btn) return;
+      function showElement(el, displayValue = "block") {
+        if (el) {
+          el.style.display = displayValue;
+        }
+      }
 
-        btn.addEventListener("click", function (e) {
+      function hideElement(el) {
+        if (el) {
+          el.style.display = "none";
+        }
+      }
+
+      function setStatusMessage(el, message, variant = "error") {
+        if (!el) return;
+        el.textContent = message;
+        el.classList.toggle("is-loading", variant === "loading");
+        showElement(el);
+      }
+
+      function clearStatusMessage(el) {
+        if (!el) return;
+        el.textContent = "";
+        el.classList.remove("is-loading");
+        hideElement(el);
+      }
+
+      function clearAppStatus() {
+        clearStatusMessage(document.getElementById("app-status"));
+      }
+
+      function showAppStatus(message, variant = "error") {
+        setStatusMessage(document.getElementById("app-status"), message, variant);
+      }
+
+      function clearRenderedStatus() {
+        clearStatusMessage(document.getElementById("rendered-html-status"));
+      }
+
+      function setText(container, selector, value) {
+        if (!container || value == null || value === "") return;
+        const target = container.querySelector(selector);
+        if (target) {
+          target.textContent = value;
+        }
+      }
+
+      function hideAllViews() {
+        hideElement(document.getElementById("default-view"));
+        hideElement(document.getElementById("enrollment-view"));
+        hideElement(document.getElementById("learning-path-view"));
+        hideElement(document.getElementById("rendered-html-view"));
+      }
+
+      function bindTeamsOpenLink(anchor) {
+        if (!anchor || anchor.dataset.teamsBound === "true") return;
+        anchor.dataset.teamsBound = "true";
+
+        anchor.addEventListener("click", function (e) {
           if (
             typeof microsoftTeams !== "undefined" &&
             microsoftTeams?.app?.openLink
           ) {
             e.preventDefault();
-            const url = this.href;
-            microsoftTeams.app.openLink(url);
+            microsoftTeams.app.openLink(this.href);
           }
         });
       }
 
-      // UI güncelle
-      const setUI = ({
+      function bindRenderedContentLinks(container) {
+        if (!container || container.dataset.teamsBound === "true") return;
+        container.dataset.teamsBound = "true";
+
+        container.addEventListener("click", function (e) {
+          const link = e.target.closest("a[href]");
+          if (!link) return;
+
+          if (
+            typeof microsoftTeams !== "undefined" &&
+            microsoftTeams?.app?.openLink
+          ) {
+            e.preventDefault();
+            microsoftTeams.app.openLink(link.href);
+          }
+        });
+      }
+
+      function getContextPayload(ctx) {
+        const encodedPayload =
+          ctx?.page?.subEntityId || ctx?.subEntityId || ctx?.page?.subPageId;
+
+        if (!encodedPayload) {
+          return { state: "missing", payload: null };
+        }
+
+        const jsonText = decode(encodedPayload);
+        if (!jsonText) {
+          return { state: "invalid", payload: null };
+        }
+
+        try {
+          return { state: "ok", payload: JSON.parse(jsonText) };
+        } catch (e) {
+          return { state: "invalid", payload: null };
+        }
+      }
+
+      function normalizeStaticPayload(data) {
+        return {
+          title: data?.title,
+          trainingUrl: data?.trainingUrl,
+          activityContent: data?.activityContent,
+          fullName: data?.fullName,
+          learningPathStepNumber: data?.learningPathStepNumber,
+          learningPathName: data?.learningPathName,
+          trainingName: data?.TrainingName || data?.trainingName,
+        };
+      }
+
+      function hasStaticFallbackData(data) {
+        const payload = normalizeStaticPayload(data);
+        return Object.values(payload).some(
+          (value) => value != null && value !== ""
+        );
+      }
+
+      function showErrorState(message) {
+        const renderedView = document.getElementById("rendered-html-view");
+        const status = document.getElementById("rendered-html-status");
+        const content = document.getElementById("rendered-html-content");
+
+        hideAllViews();
+        clearAppStatus();
+        showElement(renderedView);
+        if (content) {
+          content.innerHTML = "";
+        }
+        setStatusMessage(
+          status,
+          message || "We could not load this notification right now."
+        );
+      }
+
+      function showLoadingState(message = "Loading notification...") {
+        const renderedView = document.getElementById("rendered-html-view");
+        const content = document.getElementById("rendered-html-content");
+
+        hideAllViews();
+        clearAppStatus();
+        showElement(renderedView);
+        if (content) {
+          content.innerHTML = "";
+        }
+        setStatusMessage(
+          document.getElementById("rendered-html-status"),
+          message,
+          "loading"
+        );
+      }
+
+      function bindRenderedTrainingUrl(container, trainingUrl) {
+        if (!container || !trainingUrl) return;
+
+        const normalized = normalizeUrl(trainingUrl);
+        const anchors = container.querySelectorAll(
+          "#training-btn, #start-training, #start-learning-path, [data-training-link]"
+        );
+
+        anchors.forEach((anchor) => {
+          if (anchor.tagName !== "A") return;
+          anchor.href = normalized;
+          bindTeamsOpenLink(anchor);
+        });
+      }
+
+      function getRenderErrorMessage(error) {
+        if (error?.code === "EMPTY_RESPONSE") {
+          return "This notification did not contain any content.";
+        }
+
+        if (error?.status === 400) {
+          return "This notification link is invalid or incomplete.";
+        }
+
+        if (error?.status === 404) {
+          return "This notification could not be found anymore.";
+        }
+
+        if (error?.status >= 500) {
+          return "The notification service is temporarily unavailable. Please try again later.";
+        }
+
+        return "We could not load this notification right now. Please try again later.";
+      }
+
+      const RENDER_API_BASE_URL = "https://test-api.devkeepnet.com/api";
+
+      async function fetchRenderedHtml(renderToken) {
+        const response = await fetch(
+          `${RENDER_API_BASE_URL}/notifications/render?token=${encodeURIComponent(
+            renderToken
+          )}`
+        );
+
+        if (!response.ok) {
+          const error = new Error("Failed to load rendered HTML.");
+          error.status = response.status;
+          throw error;
+        }
+
+        const body = await response.json();
+        return body?.data || null;
+      }
+
+      function renderRenderedHtmlView({ htmlContent, title, trainingUrl }) {
+        const renderedView = document.getElementById("rendered-html-view");
+        const content = document.getElementById("rendered-html-content");
+
+        hideAllViews();
+        clearAppStatus();
+        showElement(renderedView);
+        clearRenderedStatus();
+
+        if (content) {
+          content.innerHTML = htmlContent || "";
+          bindRenderedTrainingUrl(content, trainingUrl);
+          bindRenderedContentLinks(content);
+        }
+
+        if (title) {
+          document.title = title;
+        }
+      }
+
+      function renderStaticView({
         title,
         trainingUrl,
         activityContent,
@@ -488,49 +727,61 @@
         learningPathStepNumber,
         learningPathName,
         trainingName,
-      }) => {
-        const defaultView = document.getElementById("default-view");
+      }) {
         const enrollmentView = document.getElementById("enrollment-view");
         const learningPathView = document.getElementById("learning-path-view");
-        const isLearningPath = learningPathView && learningPathName;
+        const isLearningPath = Boolean(learningPathView && learningPathName);
+        const activeView = isLearningPath ? learningPathView : enrollmentView;
+
+        hideAllViews();
+        clearRenderedStatus();
+        clearAppStatus();
+
         if (isLearningPath) {
-          learningPathView.style.display = "flex";
-          document.getElementById("learning-path-fullname").textContent =
-            fullName;
-          document.getElementById("learning-path-name").textContent =
-            learningPathName;
-          document.getElementById("learning-path-training-name").textContent =
-            trainingName;
-          document.getElementById("learning-path-step-number").textContent =
-            learningPathStepNumber;
-          document.getElementById("learning-path-step-number-2").textContent =
-            learningPathStepNumber;
+          showElement(learningPathView, "flex");
+          setText(learningPathView, "#learning-path-fullname", fullName);
+          setText(learningPathView, "#learning-path-name", learningPathName);
+          setText(
+            learningPathView,
+            "#learning-path-training-name",
+            trainingName
+          );
+          setText(
+            learningPathView,
+            "#learning-path-step-number",
+            learningPathStepNumber
+          );
+          setText(
+            learningPathView,
+            "#learning-path-step-number-2",
+            learningPathStepNumber
+          );
         } else if (enrollmentView) {
-          enrollmentView.style.display = "flex";
+          showElement(enrollmentView, "flex");
         }
 
-        if (defaultView) {
-          defaultView.style.display = "none";
-        }
-        if (title) {
-          document.getElementById("training-title").textContent = title;
+        if (title && activeView) {
+          setText(activeView, ".training-title", title);
+          document.title = title;
         }
 
-        if (fullName) {
-          document.getElementById("training-fullname").textContent = fullName;
+        if (!isLearningPath && activeView) {
+          setText(activeView, "#training-fullname", fullName);
+          setText(activeView, "#training-content", activityContent);
         }
-        if (activityContent) {
-          document.getElementById("training-content").textContent =
-            activityContent;
-        }
+
         if (trainingUrl) {
           const normalized = normalizeUrl(trainingUrl);
-          document.getElementById(
-            isLearningPath ? "start-learning-path" : "start-training"
-          ).href = normalized;
-          bindOpenInBrowser(isLearningPath);
+          const callToAction = activeView?.querySelector(
+            isLearningPath ? "#start-learning-path" : "#start-training"
+          );
+
+          if (callToAction) {
+            callToAction.href = normalized;
+            bindTeamsOpenLink(callToAction);
+          }
         }
-      };
+      }
 
       // Base64 decode helper
       const decode = (b64) => {
@@ -541,33 +792,68 @@
         }
       };
 
-      // Boot
-      microsoftTeams?.app
-        .initialize()
-        .then(() => {
-          return microsoftTeams.app.getContext();
-        })
-        .then((ctx) => {
-          const sub = ctx.page?.subPageId; // TeamsService deep link context -> subPageId (base64 json)
-          if (!sub) {
+      async function renderFromContextPayload(payload) {
+        if (!payload) {
+          return;
+        }
+
+        if (payload.useRenderedHtml === true) {
+          if (!payload.renderToken) {
+            if (hasStaticFallbackData(payload)) {
+              renderStaticView(normalizeStaticPayload(payload));
+              showAppStatus(
+                "This notification is missing a valid render token."
+              );
+              return;
+            }
+
+            showErrorState("This notification is missing a valid render token.");
             return;
           }
 
-          const jsonText = decode(sub);
-          if (!jsonText) return;
-
           try {
-            const data = JSON.parse(jsonText); // { trainingUrl, title, activityContent, fullName }
-            setUI({
-              title: data.title,
-              trainingUrl: data.trainingUrl,
-              activityContent: data.activityContent,
-              fullName: data.fullName,
-              learningPathStepNumber: data.learningPathStepNumber,
-              learningPathName: data.learningPathName,
-              trainingName: data.TrainingName,
-            });
-          } catch (e) {}
+            showLoadingState();
+            const renderedData = await fetchRenderedHtml(payload.renderToken);
+
+            if (!renderedData?.htmlContent || !String(renderedData.htmlContent).trim()) {
+              const error = new Error("Rendered HTML response is empty.");
+              error.code = "EMPTY_RESPONSE";
+              throw error;
+            }
+
+            renderRenderedHtmlView(renderedData);
+            return;
+          } catch (e) {
+            if (hasStaticFallbackData(payload)) {
+              renderStaticView(normalizeStaticPayload(payload));
+              showAppStatus(getRenderErrorMessage(e));
+              return;
+            }
+
+            showErrorState(getRenderErrorMessage(e));
+            return;
+          }
+        }
+
+        renderStaticView(normalizeStaticPayload(payload));
+      }
+
+      // Boot
+      microsoftTeams?.app
+        .initialize()
+        .then(() => microsoftTeams.app.getContext())
+        .then(async (ctx) => {
+          const contextResult = getContextPayload(ctx);
+          if (contextResult.state === "missing") {
+            return;
+          }
+
+          if (contextResult.state === "invalid") {
+            showAppStatus("This notification link is invalid or incomplete.");
+            return;
+          }
+
+          await renderFromContextPayload(contextResult.payload);
         })
         .catch((err) => err.message);
     </script>
